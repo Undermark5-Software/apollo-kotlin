@@ -2,16 +2,22 @@ package com.apollographql.apollo3.network.http
 
 import com.apollographql.apollo3.api.http.HttpHeader
 import com.apollographql.apollo3.api.http.HttpMethod
+import com.apollographql.apollo3.api.http.HttpPart
 import com.apollographql.apollo3.api.http.HttpRequest
 import com.apollographql.apollo3.api.http.HttpResponse
 import com.apollographql.apollo3.exception.ApolloNetworkException
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.onCompletion
 import kotlinx.coroutines.suspendCancellableCoroutine
 import okhttp3.Call
 import okhttp3.Headers
 import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.MultipartReader
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody
+import okhttp3.ResponseBody
 import okio.BufferedSink
 import okio.IOException
 import java.util.concurrent.TimeUnit
@@ -89,7 +95,14 @@ actual class DefaultHttpEngine constructor(
     } else {
       val result = Result.success(
           HttpResponse.Builder(statusCode = response!!.code)
-              .body(response.body!!.source())
+              .apply {
+                val isMultipart = response.headers["Content-Type"]?.startsWith("multipart/", ignoreCase = true) == true
+                if (isMultipart) {
+                  parts(multipartFlow(response.body!!))
+                } else {
+                  body(response.body!!.source())
+                }
+              }
               .addHeaders(
                   response.headers.let { headers ->
                     0.until(headers.size).map { index ->
@@ -100,6 +113,24 @@ actual class DefaultHttpEngine constructor(
               .build()
       )
       continuation.resume(result.getOrThrow())
+    }
+  }
+
+  private fun multipartFlow(responseBody: ResponseBody): Flow<HttpPart> {
+    var multipartReader: MultipartReader? = null
+    return flow {
+      multipartReader = MultipartReader(responseBody)
+      while (true) {
+        val part = multipartReader!!.nextPart() ?: break
+        emit(
+            HttpPart.Builder()
+                .body(part.body)
+                .headers(part.headers.map { HttpHeader(it.first, it.second) })
+                .build()
+        )
+      }
+    }.onCompletion {
+      runCatching { multipartReader?.close() }
     }
   }
 
