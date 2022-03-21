@@ -35,14 +35,25 @@ import com.squareup.javapoet.ParameterizedTypeName
 import com.squareup.javapoet.TypeName
 import javax.lang.model.element.Modifier
 
-internal fun responseNamesFieldSpec(model: IrModel): FieldSpec {
-  val initializer = model.properties.filter { !it.isSynthetic }.map {
+internal fun responseNamesFieldSpec(model: IrModel): FieldSpec? {
+  val regularProperties = model.properties.filter { !it.isSynthetic }
+  if (regularProperties.isEmpty()) {
+    return null
+  }
+
+  val initializer = regularProperties.map {
     CodeBlock.of(S, it.info.responseName)
   }.toListInitializerCodeblock()
 
   return FieldSpec.builder(ParameterizedTypeName.get(JavaClassNames.List, JavaClassNames.String), RESPONSE_NAMES)
       .addModifiers(Modifier.FINAL, Modifier.PRIVATE, Modifier.STATIC)
       .initializer(initializer)
+      .build()
+}
+
+private fun javaTypenameFromReaderCodeBlock(): CodeBlock {
+  return CodeBlock.builder()
+      .add("String $__typename = $T.readTypename($reader);\n", JavaClassNames.JsonReaders)
       .build()
 }
 
@@ -55,7 +66,7 @@ internal fun readFromResponseCodeBlock(
   val prefix = regularProperties.map { property ->
     val variableInitializer = when {
       hasTypenameArgument && property.info.responseName == "__typename" -> CodeBlock.of(typename)
-      (property.info.type is IrNonNullType && property.info.type.ofType is IrOptionalType) -> CodeBlock.of("$T", JavaClassNames.Absent)
+      (property.info.type is IrNonNullType && property.info.type.ofType is IrOptionalType) -> CodeBlock.of(T, JavaClassNames.Absent)
       else -> CodeBlock.of("null")
     }
 
@@ -70,33 +81,47 @@ internal fun readFromResponseCodeBlock(
   /**
    * Read the regular properties
    */
-  val loop = CodeBlock.builder()
-      .add("loop:\n")
-      .beginControlFlow("while(true)")
-      .beginControlFlow("switch ($reader.selectName($RESPONSE_NAMES))")
-      .add(
-          regularProperties.mapIndexed { index, property ->
-            CodeBlock.of(
-                "case $L: $L = $L.$fromJson($reader, $customScalarAdapters); break;",
-                index,
-                context.layout.variableName(property.info.responseName),
-                context.resolver.adapterInitializer(property.info.type, property.requiresBuffering)
-            )
-          }.joinToCode(separator = "\n", suffix = "\n")
-      )
-      .addStatement("default: break loop")
-      .endControlFlow()
-      .endControlFlow()
-      .build()
+  val loop = if (regularProperties.isNotEmpty()) {
+    CodeBlock.builder()
+        .add("loop:\n")
+        .beginControlFlow("while(true)")
+        .beginControlFlow("switch ($reader.selectName($RESPONSE_NAMES))")
+        .add(
+            regularProperties.mapIndexed { index, property ->
+              CodeBlock.of(
+                  "case $L: $L = $L.$fromJson($reader, $customScalarAdapters); break;",
+                  index,
+                  context.layout.variableName(property.info.responseName),
+                  context.resolver.adapterInitializer(property.info.type, property.requiresBuffering)
+              )
+            }.joinToCode(separator = "\n", suffix = "\n")
+        )
+        .addStatement("default: break loop")
+        .endControlFlow()
+        .endControlFlow()
+        .build()
+  } else {
+    CodeBlock.of("")
+  }
 
   val checkedProperties = mutableSetOf<String>()
 
   /**
    * Read the synthetic properties
    */
-  val checkTypename = if (syntheticProperties.isNotEmpty()) {
+  val typenameCodeBlock = if (syntheticProperties.any { it.requiresTypename }) {
     checkedProperties.add(__typename)
-    CodeBlock.of("$T.checkFieldNotMissing($__typename, $S);", JavaClassNames.Assertions, __typename)
+
+    CodeBlock.builder()
+        .apply {
+          if (regularProperties.none { it.info.responseName == "__typename" }) {
+            // We are in a nested fragment that needs access to __typename, get it from the buffered reader
+            add("$reader.rewind();\n")
+            add(javaTypenameFromReaderCodeBlock())
+          } else {
+            add("$T.checkFieldNotMissing($__typename, $S);", JavaClassNames.Assertions, __typename)
+          }
+        }.build()
   } else {
     CodeBlock.of("")
   }
@@ -135,7 +160,7 @@ internal fun readFromResponseCodeBlock(
         .build()
   }.joinToCode("\n")
 
-  val visibleProperties = model.properties.filter { !it.hidden }
+  val visibleProperties = model.properties
 
   val checks = CodeBlock.builder()
       .add(
@@ -170,8 +195,8 @@ internal fun readFromResponseCodeBlock(
       .applyIf(prefix.isNotEmpty()) { add("\n") }
       .add(loop)
       .applyIf(loop.isNotEmpty()) { add("\n") }
-      .add(checkTypename)
-      .applyIf(checkTypename.isNotEmpty()) { add("\n") }
+      .add(typenameCodeBlock)
+      .applyIf(typenameCodeBlock.isNotEmpty()) { add("\n") }
       .add(syntheticLoop)
       .applyIf(syntheticLoop.isNotEmpty()) { add("\n") }
       .add(checks)
@@ -189,7 +214,7 @@ private fun IrType.modelPath(): String {
 }
 
 internal fun writeToResponseCodeBlock(model: IrModel, context: JavaContext): CodeBlock {
-  return model.properties.filter { !it.hidden }.map { it.writeToResponseCodeBlock(context) }.joinToCode("\n")
+  return model.properties.map { it.writeToResponseCodeBlock(context) }.joinToCode("\n")
 }
 
 private fun IrProperty.writeToResponseCodeBlock(context: JavaContext): CodeBlock {

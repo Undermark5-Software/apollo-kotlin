@@ -201,6 +201,7 @@ public final class com/apollographql/apollo3/api/BooleanExpression$True : com/ap
 public final class com/apollographql/apollo3/api/BooleanExpressions {
 	public static final fun and (Lcom/apollographql/apollo3/api/BooleanExpression;[Lcom/apollographql/apollo3/api/BooleanExpression;)Lcom/apollographql/apollo3/api/BooleanExpression;
 	public static final fun and ([Lcom/apollographql/apollo3/api/BooleanExpression;)Lcom/apollographql/apollo3/api/BooleanExpression;
+	public static final fun containsPossibleTypes (Lcom/apollographql/apollo3/api/BooleanExpression;)Z
 	public static final fun evaluate (Lcom/apollographql/apollo3/api/BooleanExpression;Ljava/util/Set;Ljava/lang/String;)Z
 	public static final fun evaluate (Lcom/apollographql/apollo3/api/BooleanExpression;Lkotlin/jvm/functions/Function1;)Z
 	public static final fun not (Lcom/apollographql/apollo3/api/BooleanExpression;)Lcom/apollographql/apollo3/api/BooleanExpression;
@@ -908,6 +909,10 @@ public final class com/apollographql/apollo3/api/json/JsonReader$Token : java/la
 	public static final field STRING Lcom/apollographql/apollo3/api/json/JsonReader$Token;
 	public static fun valueOf (Ljava/lang/String;)Lcom/apollographql/apollo3/api/json/JsonReader$Token;
 	public static fun values ()[Lcom/apollographql/apollo3/api/json/JsonReader$Token;
+}
+
+public final class com/apollographql/apollo3/api/json/JsonReaders {
+	public static final fun readTypename (Lcom/apollographql/apollo3/api/json/JsonReader;)Ljava/lang/String;
 }
 
 public abstract interface class com/apollographql/apollo3/api/json/JsonWriter : java/io/Closeable {
